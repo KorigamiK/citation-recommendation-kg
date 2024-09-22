@@ -76,7 +76,6 @@ def rank_documents(out_name, testset, all_docs, all_docs_vectors, dense_embeddin
         f = open(out_name, "w", encoding="utf-8")
     
     for i, d in enumerate(tqdm.tqdm(testset)):
-        logger.info(f"Processing document {i+1}/{len(testset)}")
         ranked = []
         index = all_docs.index(d["pii"])
         d_vec = all_docs_vectors[index]
