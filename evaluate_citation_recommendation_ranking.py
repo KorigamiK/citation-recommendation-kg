@@ -5,7 +5,6 @@ import tqdm
 from sklearn.metrics.pairwise import cosine_similarity, linear_kernel
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import normalize
-from metrics_eval.ranking_metrics import average_precision
 from scipy.sparse import hstack
 import json
 from itertools import chain, combinations
@@ -47,34 +46,76 @@ def compute_cosine_similarities(vec, others):
     return linear_kernel(vec, others).flatten()
     #return cosine_similarity(vec, others).flatten()
 
+import numpy as np
+
+def average_precision(relevant_docs, retrieved_docs, k=0):
+    if k > 0:
+        retrieved_docs = retrieved_docs[:k]
+    
+    relevance = np.isin(retrieved_docs, relevant_docs).astype(int)
+    
+    if not relevance.any():
+        return 0.0
+    
+    precision_at_i = np.cumsum(relevance) / (np.arange(len(relevance)) + 1)
+    
+    return np.sum(precision_at_i * relevance) / min(len(relevant_docs), k or len(retrieved_docs))
+
+import logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 def rank_documents(out_name, testset, all_docs, all_docs_vectors, dense_embeddings=False, write_ranking=False):
+    logger.info("Starting document ranking process")
     avp10s = []
     avp20s = []
     avp50s = []
     avpAlls = []
     if write_ranking:
+        logger.info(f"Opening output file: {out_name}")
         f = open(out_name, "w", encoding="utf-8")
-    for d in tqdm.tqdm(testset):
+    
+    for i, d in enumerate(tqdm.tqdm(testset)):
+        logger.info(f"Processing document {i+1}/{len(testset)}")
         ranked = []
         index = all_docs.index(d["pii"])
         d_vec = all_docs_vectors[index]
         to_retrieve = all_docs
         to_retrieve_vec = all_docs_vectors
+        
+        logger.debug(f"Computing similarities for document {d['pii']}")
         if dense_embeddings:
             similarities = compute_cosine_similarities([d_vec], to_retrieve_vec)
         else:
             similarities = compute_cosine_similarities(d_vec, to_retrieve_vec)
+        
         for r, sim in zip(to_retrieve, similarities):
             if r == d["pii"]:
                 continue
             ranked.append((r, sim))
+        
+        logger.debug("Sorting ranked documents")
         ranked.sort(key=lambda e: e[1], reverse=True)
-        avp10s.append(average_precision(np.array(d["real_refs"]), np.array([r[0] for r in ranked]), k=10))
-        avp20s.append(average_precision(np.array(d["real_refs"]), np.array([r[0] for r in ranked]), k=20))
-        avp50s.append(average_precision(np.array(d["real_refs"]), np.array([r[0] for r in ranked]), k=50))
-        avpAlls.append(average_precision(np.array(d["real_refs"]), np.array([r[0] for r in ranked]), k=0))
-
+        
+        logger.debug("Computing average precision at different k values")
+        ranked_docs = np.array([r[0] for r in ranked])
+        real_refs = np.array(d["real_refs"])
+        
+        avp10 = average_precision(real_refs, ranked_docs, k=10)
+        avp10s.append(avp10)
+        logger.debug(f"AP@10: {avp10}")
+        
+        avp20 = average_precision(real_refs, ranked_docs, k=20)
+        avp20s.append(avp20)
+        logger.debug(f"AP@20: {avp20}")
+        
+        avp50 = average_precision(real_refs, ranked_docs, k=50)
+        avp50s.append(avp50)
+        logger.debug(f"AP@50: {avp50}")
+        
+        avpAll = average_precision(real_refs, ranked_docs, k=0)
+        avpAlls.append(avpAll)
+        logger.debug(f"AP@All: {avpAll}")
         if write_ranking:
             f.write(json.dumps({
                 "pii": d["pii"],
@@ -201,7 +242,7 @@ def evaluate_random(kg_citation_testset, all_docs):
 
 
 # TODO: Adapt path the KG (in-domain or cross-domain KG)
-kg_path = r"data\stm_silver_kg_in_domain_with_corefs.jsonl"
+kg_path = r"data/stm_silver_kg_in_domain_with_corefs.jsonl"
 #kg_path = r"data\stm_silver_kg_cross_domain_with_corefs.jsonl"
 
 # TODO: to evaluate only certain concept types, switch the for loop
